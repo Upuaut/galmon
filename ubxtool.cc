@@ -938,6 +938,18 @@ int main(int argc, char** argv)
             cerr<<"Got timeout waiting for ack of poll, no problem"<<endl;
         }
       }
+      if(doSurveyReset && version20) {
+        // CFG-TMODE-MODE = 0 (disabled), RAM layer
+        msg = buildUbxMessage(0x06, 0x8a, {0x00, 0x01, 0x00, 0x00,
+            0x01, 0x00, 0x03, 0x20, 0});
+        cerr<<humanTimeNow()<<" Sending survey-reset command"<<endl;
+        if(sendAndWaitForUBXAckNack(fd, 2, msg, 0x06, 0x8a)) {
+          if (doDEBUG) { cerr<<humanTimeNow()<<" Got ack on X20 survey-reset"<<endl; }
+          exit(0);
+        }
+        cerr<<humanTimeNow()<<" Got nack on X20 survey-reset"<<endl;
+        exit(-1);
+      }
       if(doSurveyReset) {
           uint8_t cmd = 0x3d;                   //  vers  res   survey ign      
           auto msg = buildUbxMessage(0x06, cmd, 
@@ -961,6 +973,13 @@ int main(int argc, char** argv)
         exit(0);
       }
       if(surveyMinSeconds || surveyMinCM) {
+   if(version20) {
+          // CFG-MSGOUT-UBX_NAV_SVIN_UART1, kept separate so a bad key is not fatal
+          msg = buildUbxMessage(0x06, 0x8a, {0x00, 0x01, 0x00, 0x00,
+              0x89, 0x00, 0x91, 0x20, 2});
+          if(!sendAndWaitForUBXAckNack(fd, 2, msg, 0x06, 0x8a))
+            cerr<<humanTimeNow()<<" Got nack enabling NAV-SVIN (continuing)"<<endl;
+        }
         uint32_t minSecondsVal = surveyMinSeconds;
         uint32_t minCentimetersVal;
         if(surveyMinCM==0)
@@ -970,7 +989,7 @@ int main(int argc, char** argv)
         uint8_t* ptrSeconds = (uint8_t*)&minSecondsVal, *ptrCent= (uint8_t*)&minCentimetersVal;
         uint8_t cmd;
         std::vector<uint8_t> msg;
-        if(version9) {        
+        if(version9 || version20) {
           cmd = 0x8a;
           msg = buildUbxMessage(0x06, cmd, {0x00, 0x01, 0x00, 0x00,
               0x01,0x00,0x03,0x20, 1, // survey in mode

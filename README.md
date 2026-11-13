@@ -198,6 +198,10 @@ Per device notes
 The "SparkFun GNSS L1/L5 Breakout - NEO-F10N, SMA" needs '-u1 -b 38400
 --wait'. 
 
+The "Uputronics u-blox ZED-X20P (HPG 2.11, PROTVER 50.11)" is supported on UART1: use
+'--wait --reset'. Output is configured with UBX-CFG-VALSET; the module's
+default signal set is used.
+
 Linux Systemd
 -------------
 First make sure 'ubxtool' has been compiled (run: make ubxtool). Then, as

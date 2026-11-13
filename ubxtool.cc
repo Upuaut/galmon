@@ -299,6 +299,7 @@ bool sendAndWaitForUBXAckNack(int fd, int seconds, const vector<uint8_t>& msg, u
 
 bool version9 = false;
 bool version10 = false;
+bool version20 = false;
 void enableUBXMessageOnPort(int fd, uint8_t ubxClass, uint8_t ubxType, uint8_t port, uint8_t rate=1)
 {
   for(int n=0 ; n < 5; ++n) {
@@ -717,7 +718,8 @@ int main(int argc, char** argv)
 	// https://content.u-blox.com/sites/default/files/documents/u-blox-F10-SPG-6.00_InterfaceDescription_UBX-23002975.pdf?utm_content=UBX-23002975
         if(line.find("F10") != string::npos) 
           version10=true;
-
+	if(line.find("X20") != string::npos)
+     	  version20=true;
         if(line.find("M8T") != string::npos) {
           m8t=true;
         }
@@ -735,13 +737,15 @@ int main(int argc, char** argv)
       serialno = format_serial(um1.getPayload());
       
       cerr<<humanTimeNow()<<" Serial number "<< serialno <<endl;
+	if(version20)
+        cerr<<humanTimeNow()<<" Detected version U-Blox X20"<<endl;
 
       if(version9)
         cerr<<humanTimeNow()<<" Detected version U-Blox 9"<<endl;
       usleep(50000);
 
       
-      if(!version10) {
+      if(!version10 && !version20) {
 	if (doDEBUG) { cerr<<humanTimeNow()<<" Sending GNSS query"<<endl; }
 
 	msg = buildUbxMessage(0x06, 0x3e, {});
@@ -764,7 +768,7 @@ int main(int argc, char** argv)
 	}
       }
       
-      if(!version9 && !version10) {
+      if(!version9 && !version10 && !version20) {
         //                                  ver   RO   maxch cfgs
         msg = buildUbxMessage(0x06, 0x3e, {0x00, 0x00, 0xff, 0x06,
               //                            GPS   min  max   res   x1         x2    x3,   x4
@@ -887,6 +891,37 @@ int main(int argc, char** argv)
           exit(-1);
         }
       }
+   else if(version20) {
+// CFG-MSGOUT-*_UART1 keys, all U1; rate is in navigation epochs
+  msg = buildUbxMessage(0x06, 0x8a, {0x00, 0x01, 0x00, 0x00,
+    0x07, 0x00, 0x91, 0x20, 1,                               // NAV-PVT
+    0x32, 0x02, 0x91, 0x20, 1,                               // RXM-SFRBX
+    0x66, 0x00, 0x91, 0x20, 16,                              // NAV-CLOCK
+    0x25, 0x00, 0x91, 0x20, 8,                               // NAV-POSECEF
+    0x46, 0x03, 0x91, 0x20, 8,                               // NAV-SIG
+    0x48, 0x00, 0x91, 0x20, (uint8_t)(doGPS ? 16 : 0),       // NAV-TIMEGPS
+    0x57, 0x00, 0x91, 0x20, (uint8_t)(doGalileo ? 16 : 0),   // NAV-TIMEGAL
+    0x52, 0x00, 0x91, 0x20, (uint8_t)(doBeidou ? 16 : 0),    // NAV-TIMEBDS
+    0x4d, 0x00, 0x91, 0x20, (uint8_t)(doGlonass ? 16 : 0)}); // NAV-TIMEGLO
+  if(sendAndWaitForUBXAckNack(fd, 2, msg, 0x06, 0x8a)) {
+    if (doDEBUG) { cerr<<humanTimeNow()<<" Got ack on X20 message setting"<<endl; }
+  }
+  else {
+    cerr<<humanTimeNow()<<" Got nack on X20 message setting"<<endl;
+    exit(-1);
+  }
+
+  if(!doKeepNMEA) {   // CFG-UART1OUTPROT-NMEA = off, kept in its own VALSET
+    msg = buildUbxMessage(0x06, 0x8a, {0x00, 0x01, 0x00, 0x00,
+      0x02, 0x00, 0x74, 0x10, 0});
+    if(sendAndWaitForUBXAckNack(fd, 2, msg, 0x06, 0x8a)) {
+      if (doDEBUG) { cerr<<humanTimeNow()<<" Got ack on X20 NMEA-off setting"<<endl; }
+    }
+    else
+      cerr<<humanTimeNow()<<" Got nack on X20 NMEA-off setting (continuing)"<<endl;
+  }
+}
+
 	      
       if(m8t) {
         cerr<<humanTimeNow()<<" Sending TMODE2 status query"<<endl;
@@ -968,7 +1003,7 @@ int main(int argc, char** argv)
           exit(-1);
         }
       }
-      if(doSBAS) {
+      if(doSBAS && !version20) {
         //                                 "on" "*.*"  ign   scanmode--------------------
         msg = buildUbxMessage(0x06, 0x16, {0x01, 0x07, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00}); // enable SBAS
 
@@ -982,7 +1017,8 @@ int main(int argc, char** argv)
       }
       
 
-      if(!doKeepNMEA || (newbaudrate && newbaudrate != baudrate)) {
+	if(!version20) {      
+if(!doKeepNMEA || (newbaudrate && newbaudrate != baudrate)) {
         if (doDEBUG) { cerr<<humanTimeNow()<<" Changing port settings (newbaudrate="<<newbaudrate<<", baudrate="<<baudrate<<", keepNMEA="<<doKeepNMEA<<")"<<endl; }
         
         uint8_t outproto = 0x01;
@@ -1121,6 +1157,7 @@ int main(int argc, char** argv)
       
       if (doDEBUG) { cerr<<humanTimeNow()<<" Enabling UBX-NAV-PVT"<<endl; } // position, velocity, time fix
       enableUBXMessageOnPort(fd, 0x01, 0x07, ubxport, 1); // NAV-PVT we use this to get timing
+	}
     }
   }
   
@@ -1517,6 +1554,8 @@ int main(int argc, char** argv)
             ns.emitNMM( nmm);            
           }
           else if(id.first ==2) { // GALILEO
+ 		 if(version20 && sigid != 1 && sigid != 3 && sigid != 5)
+	         continue;   // E1-B, E5a-I, E5b-I carry the nav data we can parse; skip E6 etc.
             vector<uint8_t> reserved1, reserved2, sar, spare, crc;
             uint8_t ssp;
 
@@ -1672,8 +1711,8 @@ int main(int argc, char** argv)
           }
           else if(id.first==3) {
 	    try {
-	      if(version10 && sigid==8)
-		continue;
+	     if((version10 && sigid==8) || (version20 && sigid >= 5 && sigid <= 8))
+  	     continue;   // B1C/B2a use a different frame format than D1/D2
 	      
 	      auto gstr = getGlonassFromSFRBXMsg(payload);
 	      auto cond = getCondensedBeidouMessage(gstr);
@@ -1768,7 +1807,7 @@ int main(int argc, char** argv)
        
         }
         catch(CRCMismatch& cm) {
-          if (doDEBUG) { cerr<<humanTimeNow()<<" Had CRC mismatch!"<<endl; }
+          if (doDEBUG) { cerr<<humanTimeNow()<<" Had CRC mismatch! gnssid "<<(int)payload[0]<<" sv "<<(int)payload[1]<<" sigid "<<(int)payload[2]<<endl; }
         }
 
       }
@@ -1829,8 +1868,10 @@ int main(int argc, char** argv)
           memcpy(&sigflags, &payload[18+16*n], 2);
           int sigid = 0;
 
-          if(version9 || version10) { // we only use this on versions 9 and 10 right now tho
+          if(version9 || version10 || version20) { // we only use this on versions 9, 10 and 20
             sigid = payload[10+16*n];
+	    if(version20 && gnssid == 2 && sigid >= 8)
+	    continue;
             if(gnssid == 2 && sigid ==6)  // they separate out I and Q, but the rest of UBX doesn't
               sigid = 5;                  // so map it back
             if(gnssid == 2 && sigid ==0)  
